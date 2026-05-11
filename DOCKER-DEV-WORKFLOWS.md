@@ -45,7 +45,7 @@ This option likely requires more user testing to confirm development workflow ef
 
 **Dockerfile.dev**
 ```
-FROM continuumio/miniconda3:latest
+FROM condaforge/miniforge:latest
 
 ARG DISTRO
 ARG EPOCH=latest
@@ -74,7 +74,6 @@ RUN conda env create -n rachis-${DISTRO}-${EPOCH} --file dev-env.yml \
 
 RUN /bin/bash -c "source activate rachis-${DISTRO}-${EPOCH}"
 ENV CONDA_PREFIX /opt/conda/envs/rachis-${DISTRO}-${EPOCH}/
-
 USER qiime2
 RUN qiime dev refresh-cache
 RUN python -c "from qiime2.sdk.parallel_config import get_vendored_config; get_vendored_config()"
