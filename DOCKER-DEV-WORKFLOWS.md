@@ -38,3 +38,59 @@ Once I have the container running, I will have a split-shell terminal for the fo
 - Within my local shell, I have VS Code open for modifying the working plugin repositor(ies) and (when I'm ready) pushing up changes to my remotes.
 
 Note that this workflow is effective because I've mounted the location of my local repositories as a volume within the container. So I have dual access to these directories inside the container for testing, and outside of the container for active development and pushing up my changes to Github.
+
+## Option 2: Dockerfile.dev (modified Docker image from the rachis Dockerfile.base image)
+
+This option likely requires more user testing to confirm development workflow efficacy, but should be a viable replacement for the base dockerfile for the purposes of developer use and permissions.
+
+**Dockerfile.dev**
+```
+FROM continuumio/miniconda3:latest
+
+ARG DISTRO
+ARG EPOCH=latest
+ARG DISTRO_SUBDIR=passed
+
+ENV PATH /opt/conda/envs/rachis-${DISTRO}-${EPOCH}/bin:$PATH
+ENV LC_ALL C.UTF-8
+ENV LANG C.UTF-8
+ENV MPLBACKEND agg
+ENV UNIFRAC_USE_GPU N
+ENV HOME /home/qiime2
+ENV XDG_CONFIG_HOME /home/qiime2
+
+RUN conda update -q -y conda
+RUN conda install -q -y wget
+RUN apt-get install -y procps
+
+COPY ${EPOCH}/${DISTRO}/${DISTRO_SUBDIR}/rachis-${DISTRO}-linux-64-conda.yml dev-env.yml
+RUN conda env create -n rachis-${DISTRO}-${EPOCH} --file dev-env.yml \
+ && conda clean -a -y \
+ && groupadd -g 1000 qiime2 \
+ && useradd -m -u 1000 -g 1000 -s /bin/bash qiime2 \
+ && mkdir -p /data /home/qiime2/.cache \
+ && chown -R qiime2:qiime2 /opt/conda /data /home/qiime2 \
+ && rm dev-env.yml
+
+RUN /bin/bash -c "source activate rachis-${DISTRO}-${EPOCH}"
+ENV CONDA_PREFIX /opt/conda/envs/rachis-${DISTRO}-${EPOCH}/
+
+USER qiime2
+RUN qiime dev refresh-cache
+RUN python -c "from qiime2.sdk.parallel_config import get_vendored_config; get_vendored_config()"
+RUN echo "source activate rachis-${DISTRO}-${EPOCH}" >> /home/qiime2/.bashrc
+RUN echo "source tab-qiime" >> /home/qiime2/.bashrc
+
+# HACK: regression in libc 2.41 causes:
+# libssu_nv_avx2.so: cannot enable executable stack as shared object requires: Invalid argument
+ENV GLIBC_TUNABLES glibc.rtld.execstack=2
+
+VOLUME ["/data"]
+WORKDIR /data
+```
+Primary differences between this and `Dockerfile.base`:
+- `EPOCH` and `DISTRO_SUBDIR` are set to pull the latest dev env file vs release env file.
+- A `qiime2` user/group is set at 1000:1000 with ownership of `/opt/conda`, `/data` and `/home/qiime2`, and cache/init steps are run under this user.
+- Shell activation is written to `/home/qiime2/.bashrc`.
+
+These changes allow for conda envs to be created or modified under `/opt/conda` and a mounted repository checkout under `/data` without running as root.
