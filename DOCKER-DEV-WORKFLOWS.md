@@ -1,4 +1,4 @@
-# Docker Develoment Environment Recommendations
+# Docker Development Environment Recommendations
 This README outlines two workflows I’ve tested for managing a local development environment for moshpit/pathogenome distributions on an osx machine using Docker. Note that I will change/add things as these processes are improved and fine-tuned with more widespread use.
 
 ---------------
@@ -56,8 +56,8 @@ ENV LC_ALL C.UTF-8
 ENV LANG C.UTF-8
 ENV MPLBACKEND agg
 ENV UNIFRAC_USE_GPU N
-ENV HOME /home/qiime2
-ENV XDG_CONFIG_HOME /home/qiime2
+ENV HOME /home/ubuntu
+ENV XDG_CONFIG_HOME /home/ubuntu
 
 RUN conda update -q -y conda
 RUN conda install -q -y wget
@@ -66,30 +66,71 @@ RUN apt-get install -y procps
 COPY ${EPOCH}/${DISTRO}/${DISTRO_SUBDIR}/rachis-${DISTRO}-linux-64-conda.yml dev-env.yml
 RUN conda env create -n rachis-${DISTRO}-${EPOCH} --file dev-env.yml \
  && conda clean -a -y \
- && groupadd -g 1000 qiime2 \
- && useradd -m -u 1000 -g 1000 -s /bin/bash qiime2 \
- && mkdir -p /data /home/qiime2/.cache \
- && chown -R qiime2:qiime2 /opt/conda /data /home/qiime2 \
+ && mkdir -p /data /home/ubuntu/.cache \
+ && chown -R ubuntu:ubuntu /opt/conda /data /home/ubuntu \
  && rm dev-env.yml
 
 RUN /bin/bash -c "source activate rachis-${DISTRO}-${EPOCH}"
 ENV CONDA_PREFIX /opt/conda/envs/rachis-${DISTRO}-${EPOCH}/
-USER qiime2
+USER ubuntu
 RUN qiime dev refresh-cache
 RUN python -c "from qiime2.sdk.parallel_config import get_vendored_config; get_vendored_config()"
-RUN echo "source activate rachis-${DISTRO}-${EPOCH}" >> /home/qiime2/.bashrc
-RUN echo "source tab-qiime" >> /home/qiime2/.bashrc
+RUN echo "source activate rachis-${DISTRO}-${EPOCH}" >> /home/ubuntu/.bashrc
+RUN echo "source tab-qiime" >> /home/ubuntu/.bashrc
 
 # HACK: regression in libc 2.41 causes:
 # libssu_nv_avx2.so: cannot enable executable stack as shared object requires: Invalid argument
 ENV GLIBC_TUNABLES glibc.rtld.execstack=2
 
-VOLUME ["/data"]
 WORKDIR /data
 ```
 Primary differences between this and `Dockerfile.base`:
 - `EPOCH` and `DISTRO_SUBDIR` are set to pull the latest dev env file vs release env file.
-- A `qiime2` user/group is set at 1000:1000 with ownership of `/opt/conda`, `/data` and `/home/qiime2`, and cache/init steps are run under this user.
-- Shell activation is written to `/home/qiime2/.bashrc`.
+- The default ubuntu user/group is set with ownership of `/opt/conda`, `/data` and `/home/ubuntu`, and cache/init steps are run under this user.
+- Shell activation is written to `/home/ubuntu/.bashrc`.
 
-These changes allow for conda envs to be created or modified under `/opt/conda` and a mounted repository checkout under `/data` without running as root.
+These changes allow for conda envs to be created or modified under `/opt/conda` without running as root, and also support writing within image-owned working directories as well as compatible runtime-mounted workspaces.
+
+Note that DISTRO will need to be set when the image gets created.
+
+For configurations that set a separate user when mounting `/workspaces/<repo>`, a `devcontainer.json` file will be helpful for running as root to ensure the bind mount is writable. Here's an example of what this would look like (using moshpit as the target distro):
+
+devcontainer.json
+```
+{
+  "name": "moshpit-dev",
+  "build": {
+    "dockerfile": "../Dockerfile.dev",
+    "context": "..",
+    "args": {
+      "DISTRO": "moshpit",
+      "EPOCH": "latest",
+      "DISTRO_SUBDIR": "passed"
+    }
+  },
+  "runArgs": [
+    "--platform=linux/amd64"
+  ],
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/${localWorkspaceFolderBasename},type=bind,consistency=cached",
+  "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
+  "mounts": [
+    "source=conda-pkgs,target=/opt/conda/pkgs,type=volume",
+    "source=conda-envs,target=/opt/conda/envs,type=volume"
+  ],
+  "containerUser": "root",
+  "remoteUser": "root",
+  "updateRemoteUserUID": false,
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash"
+      }
+    }
+  }
+}
+```
+A couple of notes on this:
+- `containerUser` and `remoteUser` are set to `root` to deal with mismatched bind mount ownership.
+- `updateRemoteUserUID: false` prevents VS Code from remapping users.
+
+Something to keep in mind is that in this root-based devcontainer case, you may need to manually run `source activate rachis-${DISTRO}-${EPOCH}` and `source tab-qiime` if your particular shell does not auto-activate.
