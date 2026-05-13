@@ -39,13 +39,15 @@ Once I have the container running, I will have a split-shell terminal for the fo
 
 Note that this workflow is effective because I've mounted the location of my local repositories as a volume within the container. So I have dual access to these directories inside the container for testing, and outside of the container for active development and pushing up my changes to Github.
 
+If there are any additional packages you'd like to install and have access to across multiple environments (such as pytest-xdist, black, etc) you can install them into the base conda environment (just like you'd do on your native machine).
+
 ## Option 2: Dockerfile.dev (modified Docker image from the rachis Dockerfile.base image)
 
 This option likely requires more user testing to confirm development workflow efficacy, but should be a viable replacement for the base dockerfile for the purposes of developer use and permissions.
 
 **Dockerfile.dev**
 ```
-FROM condaforge/miniforge:latest
+FROM condaforge/miniforge3:latest
 
 ARG DISTRO
 ARG EPOCH=latest
@@ -63,7 +65,7 @@ RUN conda update -q -y conda
 RUN conda install -q -y wget
 RUN apt-get install -y procps
 
-COPY ${EPOCH}/${DISTRO}/${DISTRO_SUBDIR}/rachis-${DISTRO}-linux-64-conda.yml dev-env.yml
+COPY ${EPOCH}/${DISTRO_SUBDIR}/rachis-${DISTRO}-linux-64-conda.yml dev-env.yml
 RUN conda env create -n rachis-${DISTRO}-${EPOCH} --file dev-env.yml \
  && conda clean -a -y \
  && mkdir -p /data /home/ubuntu/.cache \
@@ -84,6 +86,7 @@ ENV GLIBC_TUNABLES glibc.rtld.execstack=2
 
 WORKDIR /data
 ```
+
 Primary differences between this and `Dockerfile.base`:
 - `EPOCH` and `DISTRO_SUBDIR` are set to pull the latest dev env file vs release env file.
 - The default ubuntu user/group is set with ownership of `/opt/conda`, `/data` and `/home/ubuntu`, and cache/init steps are run under this user.
@@ -93,7 +96,26 @@ These changes allow for conda envs to be created or modified under `/opt/conda` 
 
 Note that DISTRO will need to be set when the image gets created.
 
-For configurations that set a separate user when mounting `/workspaces/<repo>`, a `devcontainer.json` file will be helpful for running as root to ensure the bind mount is writable. Here's an example of what this would look like (using moshpit as the target distro):
+Sitting in the top-level distributions repository on your local machine, you can build the image with something like the following command:
+```
+docker build -f ~/path-to-your/Dockerfile.dev \
+  --platform=linux/amd64 \
+  --build-arg DISTRO=moshpit \
+  -t moshpit-dev:test .
+```
+
+To start a container using this newly built image, you'd do something like the following:
+```
+docker run --rm -it --platform linux/amd64 \
+  -v ~/Documents/repositories:/data \
+  moshpit-dev:test bash -l
+```
+
+If there are any additional packages that you'd like to be installed within the image (that would be available across multiple containers) you can add these into Dockerfile.dev after the installation of the latest rachis distribution you're targeting (such as pytest-xdist, black, etc).
+
+Note that any additional conda envs created inside this container won't persist across sessions unless volumes are mounted for conda pkgs & envs (like in Option 1).
+
+For configurations that set a separate user when mounting `/workspaces/<repo>`, a `devcontainer.json` file is helpful for running as root to ensure the bind mount is writable. Here's an example of what this would look like (using moshpit as the target distro):
 
 devcontainer.json
 ```
